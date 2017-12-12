@@ -47,7 +47,7 @@ def get_domain_info(conn, name, tag):
     elif tag == "max_mem":
         return domain_info[1]
     elif tag == "mem_used":
-        return domain_info[2]
+        return domain_obj.memoryStats()['rss']
     elif tag == "cpu_num":
         return domain_info[3]
     elif tag == "cpu_used":
@@ -75,6 +75,20 @@ def get_domain_iface_info(conn, name, tag):
             total += iface_info[0]
         elif tag == "outgoing_byte":
             total += iface_info[4]
+    return total
+
+def get_domain_disk_info(conn, name, tag):
+    domain_obj = conn.lookupByName(name)
+    domain_tree = get_domain_xml(domain_obj)
+    disks = domain_tree.findall('devices/disk/target')
+    total = 0
+    for disk in disks:
+        disk_str = disk.get('dev')
+        disk_info = domain_obj.blockStats(disk_str)
+        if tag == "read_byte":
+            total += disk_info[0]
+        elif tag == "write_byte":
+            total += disk_info[3]
     return total
 
 
@@ -112,6 +126,15 @@ def domain_info(args):
             tag = "outgoing_byte"
             domain_outgoing = get_domain_iface_info(conn, args.name, tag)
             print domain_outgoing
+        elif args.read_byte:
+            tag = "read_byte"
+            domain_read = get_domain_disk_info(conn, args.name, tag)
+            print domain_read
+        elif args.write_byte:
+            tag = "write_byte"
+            domain_write = get_domain_disk_info(conn, args.name, tag)
+            print domain_write
+
 
 
 def hypervisor_info(args):
@@ -169,14 +192,22 @@ if __name__ == "__main__":
                                "--cpu_num",
                                action="store_true",
                                help="cpu number of the domain used")
-    parser_domain.add_argument("-rb",
+    parser_domain.add_argument("-ib",
                                "--incoming_byte",
                                action="store_true",
                                help="the network incoming bytes")
-    parser_domain.add_argument("-tb",
+    parser_domain.add_argument("-ob",
                                "--outgoing_byte",
                                action="store_true",
                                help="the network outgoing bytes")
+    parser_domain.add_argument("-rb",
+                               "--read_byte",
+                               action="store_true",
+                               help="the disk read bytes")
+    parser_domain.add_argument("-wb",
+                               "--write_byte",
+                               action="store_true",
+                               help="the disk write bytes")
     parser_domain.set_defaults(func=domain_info)
     # add hypervisor subcomd
     parser_hypervisor = subparsers.add_parser('hypervisor',
