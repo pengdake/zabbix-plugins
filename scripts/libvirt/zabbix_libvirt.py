@@ -1,109 +1,142 @@
-#!/usr/bin/env python
+#!/usr/bin/env /usr/bin/python
 
 import libvirt
 import argparse
 import time
+import json
+from xml.etree import ElementTree
+
+DOMAIN_STATES = ["nostate",
+                 "running",
+                 "blocked",
+                 "paused",
+                 "shutdown",
+                 "shutoff",
+                 "crashed",
+                 "pmsuspended"]
 
 
-def get_node_memory(conn):
-    return conn.getInfo()[1]
-
-
-def get_node_frequency(conn):
-    return conn.getInfo()[3]
-
-
-def get_node_cpus(conn):
-    return conn.getInfo()[2]
-
-
-def get_node_cores(conn):
-    return conn.getInfo()[6]
-
-
-def get_node_threads(conn):
-    return conn.getInfo()[7]
+def get_node_info(conn, tag):
+    node_info_list = conn.getInfo()
+    if tag == "memory":
+        return node_info_list[1]
+    elif tag == "frequency":
+        return node_info_list[3]
+    elif tag == "cpus":
+        return node_info_list[2]
+    elif tag == "cores":
+        return node_info_list[6]
+    elif tag == "threads":
+        return node_info_list[7]
 
 
 def get_domain_list(conn):
-    return [domain.name() for domain in conn.listAllDomains()]
+    domain_list = []
+    domains = conn.listAllDomains()
+    for domain in domains:
+        domain_list.append({"{#DOMAIN_NAME}": domain.name()})
+    return json.dumps({"data": domain_list}, indent=4)
 
 
-def get_domain(conn, name):
-    return conn.lookupByName(name)
+def get_domain_info(conn, name, tag):
+    domain_obj = conn.lookupByName(name)
+    domain_info = domain_obj.info()
+    if tag == "state":
+        domain_state = domain_info[0]
+        return DOMAIN_STATES[domain_state]
+    elif tag == "max_mem":
+        return domain_info[1]
+    elif tag == "mem_used":
+        return domain_info[2]
+    elif tag == "cpu_num":
+        return domain_info[3]
+    elif tag == "cpu_used":
+        time_1 = domain_info[4]
+        sleep_time = 1
+        time.sleep(sleep_time)
+        time_2 = domain_obj.info()[4]
+        cpu_cores = get_node_info(conn, "cores")
+        return round(100 * (time_2 - time_1)/(sleep_time * cpu_cores * 1e9), 2)
 
 
-def get_domain_state(conn, domain_name):
-    domain_obj = get_domain(conn, domain_name)
-    domain_state = domain_obj.info()[0]
-    domain_state_list = ["nostate",
-                         "running",
-                         "blocked",
-                         "paused",
-                         "shutdown",
-                         "shutoff",
-                         "crashed",
-                         "pmsuspended"]
-    return domain_state_list[domain_state]
+def get_domain_xml(domain_obj):
+    return ElementTree.fromstring(domain_obj.XMLDesc())
 
 
-def get_domain_memory_used(conn, domain_name):
-    domain_obj = get_domain(conn, domain_name)
-    return domain_obj.info()[2]
+def get_domain_iface_info(conn, name, tag):
+    domain_obj = conn.lookupByName(name)
+    domain_tree = get_domain_xml(domain_obj)
+    ifaces = domain_tree.findall('devices/interface/target')
+    total = 0
+    for iface in ifaces:
+        iface_str = iface.get('dev')
+        iface_info = domain_obj.interfaceStats(iface_str)
+        if tag == "incoming_byte":
+            total += iface_info[0]
+        elif tag == "outgoing_byte":
+            total += iface_info[4]
+    return total
 
-
-def get_domain_cpu_num(conn, domain_name):
-    domain_obj = get_domain(conn, domain_name)
-    return domain_obj.info()[3]
-
-
-def get_domain_cpu_used(conn, domain_name):
-    domain_obj = get_domain(conn, domain_name)
-    sleep_time = 1
-    time_1 = domain_obj.info()[4]
-    time.sleep(sleep_time)
-    time_2 = domain_obj.info()[4]
-    cpu_cores = get_node_cores(conn)
-    return round(100 * (time_2 - time_1)/(sleep_time * cpu_cores * 1e9), 2)
 
 def domain_info(args):
-    conn = libvirt.openReadOnly(None)
+    conn = libvirt.openReadOnly("qemu+ssh://root@10.10.10.111/system")
     if args.list:
         domains = get_domain_list(conn)
         print domains
     elif args.name:
         if args.state:
-            domain_state = get_domain_state(conn, args.name)
+            tag = "state"
+            domain_state = get_domain_info(conn, args.name, tag)
             print domain_state
-        elif args.usememory:
-            domain_memory = get_domain_memory_used(conn, args.name)
-            print domain_memory
-        elif args.cpunum:
-            domain_cpu_num = get_domain_cpu_num(conn, args.name)
+        elif args.memory_used:
+            tag = "mem_used"
+            domain_mem_used = get_domain_info(conn, args.name, tag)
+            print domain_mem_used
+        elif args.max_memory:
+            tag = "max_mem"
+            domain_max_mem = get_domain_info(conn, args.name, tag)
+            print domain_max_mem
+        elif args.cpu_num:
+            tag = "cpu_num"
+            domain_cpu_num = get_domain_info(conn, args.name, tag)
             print domain_cpu_num
-        elif args.usecpu:
-            domain_cpu = get_domain_cpu_used(conn, args.name)
+        elif args.cpu_used:
+            tag = "cpu_used"
+            domain_cpu = get_domain_info(conn, args.name, tag)
             print domain_cpu
+        elif args.incoming_byte:
+            tag = "incoming_byte"
+            domain_incoming = get_domain_iface_info(conn, args.name, tag)
+            print domain_incoming
+        elif args.outgoing_byte:
+            tag = "outgoing_byte"
+            domain_outgoing = get_domain_iface_info(conn, args.name, tag)
+            print domain_outgoing
 
 
 def hypervisor_info(args):
-    conn = libvirt.openReadOnly(None)
+    conn = libvirt.openReadOnly("qemu+ssh://root@10.10.10.111/system")
     if args.memory:
-        hypervisor_mem = get_node_memory(conn)
+        tag = "memory"
+        hypervisor_mem = get_node_info(conn, tag)
         print hypervisor_mem
     elif args.cores:
-        hypervisor_cores = get_node_cores(conn)
+        tag = "cores"
+        hypervisor_cores = get_node_info(conn, tag)
         print hypervisor_cores
     elif args.cpus:
-        hypervisor_cpus = get_node_cpus(conn)
+        tag = "cpus"
+        hypervisor_cpus = get_node_info(conn, tag)
         print hypervisor_cpus
     elif args.threads:
-        hypervisor_threads = get_node_threads(conn)
+        tag = "threads"
+        hypervisor_threads = get_node_info(conn, tag)
         print hypervisor_threads
     elif args.frequency:
-        hypervisor_frequency = get_node_frequency(conn)
+        tag = "frequency"
+        hypervisor_frequency = get_node_info(conn, tag)
         print hypervisor_frequency
-    
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -120,18 +153,30 @@ if __name__ == "__main__":
     parser_domain.add_argument("-s", "--state",
                                action="store_true",
                                help="the domain state")
-    parser_domain.add_argument("-um",
-                               "--usememory",
+    parser_domain.add_argument("-mu",
+                               "--memory_used",
+                               action="store_true",
+                               help="the domain memory used")
+    parser_domain.add_argument("-mm",
+                               "--max_memory",
                                action="store_true",
                                help="the domain used memory")
-    parser_domain.add_argument("-uc",
-                               "--usecpu",
+    parser_domain.add_argument("-cu",
+                               "--cpu_used",
                                action="store_true",
                                help="the domain cpu used")
     parser_domain.add_argument("-cn",
-                               "--cpunum",
+                               "--cpu_num",
                                action="store_true",
                                help="cpu number of the domain used")
+    parser_domain.add_argument("-rb",
+                               "--incoming_byte",
+                               action="store_true",
+                               help="the network incoming bytes")
+    parser_domain.add_argument("-tb",
+                               "--outgoing_byte",
+                               action="store_true",
+                               help="the network outgoing bytes")
     parser_domain.set_defaults(func=domain_info)
     # add hypervisor subcomd
     parser_hypervisor = subparsers.add_parser('hypervisor',
