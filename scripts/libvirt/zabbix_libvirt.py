@@ -41,16 +41,20 @@ def get_domain_list(conn):
 def get_domain_info(conn, name, tag):
     domain_obj = conn.lookupByName(name)
     domain_info = domain_obj.info()
+    domain_state = DOMAIN_STATES[domain_info[0]]
     if tag == "state":
-        domain_state = domain_info[0]
-        return DOMAIN_STATES[domain_state]
+        return domain_state
     elif tag == "max_mem":
         return domain_info[1]
     elif tag == "mem_used":
+        if domain_state != "running":
+            return 0
         return domain_obj.memoryStats()['rss']
     elif tag == "cpu_num":
         return domain_info[3]
     elif tag == "cpu_used":
+        if domain_state != "running":
+            return 0
         time_1 = domain_info[4]
         sleep_time = 1
         time.sleep(sleep_time)
@@ -64,6 +68,9 @@ def get_domain_xml(domain_obj):
 
 
 def get_domain_iface_info(conn, name, tag):
+    domain_state = get_domain_info(conn, name, "state")
+    if domain_state != "running":
+        return 0
     domain_obj = conn.lookupByName(name)
     domain_tree = get_domain_xml(domain_obj)
     ifaces = domain_tree.findall('devices/interface/target')
@@ -77,7 +84,11 @@ def get_domain_iface_info(conn, name, tag):
             total += iface_info[4]
     return total
 
+
 def get_domain_disk_info(conn, name, tag):
+    domain_state = get_domain_info(conn, name, "state")
+    if domain_state != "running":
+        return 0
     domain_obj = conn.lookupByName(name)
     domain_tree = get_domain_xml(domain_obj)
     disks = domain_tree.findall('devices/disk/target')
@@ -93,7 +104,7 @@ def get_domain_disk_info(conn, name, tag):
 
 
 def domain_info(args):
-    conn = libvirt.openReadOnly("qemu+ssh://root@10.10.10.111/system")
+    conn = libvirt.openReadOnly(None)
     if args.list:
         domains = get_domain_list(conn)
         print domains
@@ -136,9 +147,8 @@ def domain_info(args):
             print domain_write
 
 
-
 def hypervisor_info(args):
-    conn = libvirt.openReadOnly("qemu+ssh://root@10.10.10.111/system")
+    conn = libvirt.openReadOnly(None)
     if args.memory:
         tag = "memory"
         hypervisor_mem = get_node_info(conn, tag)
